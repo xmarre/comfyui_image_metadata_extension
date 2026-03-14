@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -115,6 +116,8 @@ class SaveImageWithMetaData:
     CATEGORY = "SaveImage"
 
     pattern_format = re.compile(r"(%[^%]+%)") # Pattern to match mask values in the filename
+    invalid_path_chars = re.compile(r'[<>:"|?*\x00-\x1f]')
+    whitespace_re = re.compile(r"\s+")
 
     def parse_output_format(self, output_format: str):
         fmt = OutputFormat(output_format)
@@ -145,6 +148,33 @@ class SaveImageWithMetaData:
         """Extracts placeholder segments like %seed%, %pprompt:32%, etc."""
         return re.findall(cls.pattern_format, filename) if "%" in filename else []
 
+    @classmethod
+    def sanitize_filename_component(cls, value, default="ComfyUI", max_length=160):
+        """Convert dynamic filename text into a single safe filename component."""
+        value = "" if value is None else str(value)
+        value = unicodedata.normalize("NFKC", value)
+        value = value.replace("/", "_").replace("\\", "_")
+        value = cls.invalid_path_chars.sub("_", value)
+        value = cls.whitespace_re.sub(" ", value).strip(" .")
+        return value[:max_length] or default
+
+    @classmethod
+    def sanitize_subdirectory_path(cls, value, max_component_length=80):
+        """Convert dynamic subdirectory text into a safe relative subdirectory path."""
+        value = "" if value is None else str(value)
+        value = unicodedata.normalize("NFKC", value)
+        raw_parts = re.split(r"[\\/]+", value)
+        parts = []
+        for part in raw_parts:
+            part = part.strip()
+            if not part or part in (".", ".."):
+                continue
+            safe = cls.invalid_path_chars.sub("_", part)
+            safe = cls.whitespace_re.sub(" ", safe).strip(" .")
+            if safe:
+                parts.append(safe[:max_component_length])
+        return os.path.join(*parts) if parts else ""
+
     def needs_pnginfo_in_filename(self, segments: list[str]) -> bool:
         for segment in segments:
             parts = segment.strip("%").split(":")
@@ -168,8 +198,13 @@ class SaveImageWithMetaData:
         if metadata_scope in [MetadataScope.FULL, MetadataScope.PARAMETERS_ONLY] or self.needs_pnginfo_in_filename(segments):
             pnginfo_dict = pnginfo_dict or self.gen_pnginfo(prompt, prefer_nearest)
 
-        filename_prefix = self.format_filename(filename_prefix, pnginfo_dict or {}, segments) + self.prefix_append
-        subdirectory_name = self.format_filename(subdirectory_name, pnginfo_dict or {})
+        filename_prefix = self.sanitize_filename_component(
+            self.format_filename(filename_prefix, pnginfo_dict or {}, segments) + self.prefix_append,
+            default="ComfyUI",
+        )
+        subdirectory_name = self.sanitize_subdirectory_path(
+            self.format_filename(subdirectory_name, pnginfo_dict or {})
+        )
 
 
         image_shape = images[0].shape
@@ -178,11 +213,9 @@ class SaveImageWithMetaData:
         )
 
         # Handle subdirectory naming and creation
-        subdirectory_name = subdirectory_name.strip()
         if subdirectory_name:
-            subdirectory_name = self.format_filename(subdirectory_name, pnginfo_dict)
             full_output_folder = os.path.join(self.output_dir, subdirectory_name)
-            filename = filename_prefix
+            filename = self.sanitize_filename_component(filename_prefix, default="ComfyUI")
 
         os.makedirs(full_output_folder, exist_ok=True)
 
