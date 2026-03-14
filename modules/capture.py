@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import inspect
 from collections import defaultdict
 from . import hook
 from .defs.captures import CAPTURE_FIELD_LIST
@@ -21,23 +22,38 @@ class OutputCacheCompat:
     def __init__(self, cache):
         self._cache = cache
 
-    def get_output_cache(self, input_unique_id, unique_id=None):
-        # For version 0.3.67 and newer
-        if hasattr(self._cache, "get"):
-            return self._cache.get(input_unique_id)
+    def _lookup_cached(self, input_unique_id, unique_id=None):
+        # Newer ComfyUI cache objects expose an async get() and a sync get_local().
+        # This shim is used from synchronous metadata capture code, so prefer the
+        # synchronous accessors and reject awaitable results from get().
+        get_local = getattr(self._cache, "get_local", None)
+        if callable(get_local):
+            return get_local(input_unique_id)
+
+        get_cache = getattr(self._cache, "get_cache", None)
+        if callable(get_cache):
+            try:
+                return get_cache(input_unique_id, unique_id)
+            except TypeError:
+                return get_cache(input_unique_id)
+
+        getter = getattr(self._cache, "get", None)
+        if callable(getter):
+            result = getter(input_unique_id)
+            if not inspect.isawaitable(result):
+                return result
+
         return getattr(self._cache, "outputs", {}).get(input_unique_id, None)
 
+    def get_output_cache(self, input_unique_id, unique_id=None):
+        return self._lookup_cached(input_unique_id, unique_id)
+
     def get(self, input_unique_id):
-        # For version 0.3.66 and lower
-        if hasattr(self._cache, "get"):
-            return self._cache.get(input_unique_id)
-        return getattr(self._cache, "outputs", {}).get(input_unique_id, None)
-    
+        return self._lookup_cached(input_unique_id)
+
     # fix: https://github.com/edelvarden/comfyui_image_metadata_extension/issues/67
     def get_cache(self, input_unique_id, unique_id=None):
-        if hasattr(self._cache, "get_cache"):
-            return self._cache.get_cache(input_unique_id, unique_id)
-        return self.get_output_cache(input_unique_id, unique_id)
+        return self._lookup_cached(input_unique_id, unique_id)
 
 
 class Capture:
