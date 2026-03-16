@@ -206,16 +206,11 @@ class SaveImageWithMetaData:
             self.format_filename(subdirectory_name, pnginfo_dict or {})
         )
 
-
         image_shape = images[0].shape
+        save_prefix = os.path.join(subdirectory_name, filename_prefix) if subdirectory_name else filename_prefix
         full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(
-            filename_prefix, self.output_dir, image_shape[1], image_shape[0]
+            save_prefix, self.output_dir, image_shape[1], image_shape[0]
         )
-
-        # Handle subdirectory naming and creation
-        if subdirectory_name:
-            full_output_folder = os.path.join(self.output_dir, subdirectory_name)
-            filename = self.sanitize_filename_component(filename_prefix, default="ComfyUI")
 
         os.makedirs(full_output_folder, exist_ok=True)
 
@@ -263,7 +258,7 @@ class SaveImageWithMetaData:
                 })
                 piexif.insert(exif_bytes, path)
 
-            results.append({"filename": file, "subfolder": full_output_folder, "type": self.type})
+            results.append({"filename": file, "subfolder": subfolder, "type": self.type})
 
         # Save workflow metadata for the batch
         if save_workflow_json and images_length > 0 and last_image_filename:
