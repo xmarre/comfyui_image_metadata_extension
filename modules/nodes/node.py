@@ -198,10 +198,24 @@ class SaveImageWithMetaData:
         if metadata_scope in [MetadataScope.FULL, MetadataScope.PARAMETERS_ONLY] or self.needs_pnginfo_in_filename(segments):
             pnginfo_dict = pnginfo_dict or self.gen_pnginfo(prompt, prefer_nearest)
 
-        filename_prefix = self.sanitize_filename_component(
-            self.format_filename(filename_prefix, pnginfo_dict or {}, segments) + self.prefix_append,
-            default="ComfyUI",
-        )
+        raw_filename_prefix = self.format_filename(
+            filename_prefix, pnginfo_dict or {}, segments
+        ) + self.prefix_append
+        raw_prefix_parts = [p for p in re.split(r"[\\/]+", raw_filename_prefix) if p]
+
+        if raw_prefix_parts:
+            prefix_dir = self.sanitize_subdirectory_path(
+                os.path.join(*raw_prefix_parts[:-1]) if len(raw_prefix_parts) > 1 else ""
+            )
+            prefix_name = self.sanitize_filename_component(
+                raw_prefix_parts[-1], default="ComfyUI"
+            )
+            filename_prefix = (
+                os.path.join(prefix_dir, prefix_name) if prefix_dir else prefix_name
+            )
+        else:
+            filename_prefix = "ComfyUI"
+
         subdirectory_name = self.sanitize_subdirectory_path(
             self.format_filename(subdirectory_name, pnginfo_dict or {})
         )
