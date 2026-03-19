@@ -1,12 +1,25 @@
 from collections import deque, defaultdict
 from .defs.samplers import SAMPLERS
 from .utils.log import print_warning
+from comfy_execution.graph_utils import is_link
 
 class Trace:
     _trace_cache = {}
 
     @staticmethod
+    def _extract_upstream_node_id(value, prompt):
+        """Return the upstream node id for a real ComfyUI prompt link, else None."""
+        if not is_link(value):
+            return None
+        node_id = value[0]
+        if node_id not in prompt:
+            return None
+
+        return node_id
+
+    @staticmethod
     def _bfs_traverse(start_node_id, prompt, visit_node, edge_condition=None):
+        start_node_id = str(start_node_id)
         Q = deque([(start_node_id, 0)])
         visited_nodes = set()
         visited_edges = set()
@@ -21,43 +34,36 @@ class Trace:
             visit_node(current_node_id, node, distance)
 
             for value in node.get("inputs", {}).values():
-                if isinstance(value, list):
-                    values = value
-                else:
-                    values = [value]
+                next_id = Trace._extract_upstream_node_id(value, prompt)
+                if next_id is None:
+                    continue
 
-                for next_id in values:
-                    if next_id is None:
-                        continue
+                edge = (current_node_id, next_id)
+                if edge in visited_edges or (edge_condition and not edge_condition(current_node_id, next_id)):
+                    continue
 
-                    # Handle dict-based links (ComfyUI internal link structures)
-                    if isinstance(next_id, dict):
-                        next_id = next_id.get("link") or next_id.get("id") or next_id.get("node_id")
-
-                    # Skip if still invalid
-                    if next_id is None or isinstance(next_id, dict):
-                        continue
-
-                    next_id = str(next_id) if isinstance(next_id, int) else next_id
-
-                    edge = (current_node_id, next_id)
-                    if edge in visited_edges or (edge_condition and not edge_condition(current_node_id, next_id)):
-                        continue
-
-                    visited_edges.add(edge)
-                    Q.append((next_id, distance + 1))
+                visited_edges.add(edge)
+                Q.append((next_id, distance + 1))
 
     @classmethod
     def _compute_trace_signature(cls, start_node_id, prompt):
         structure = []
+
         def collect_structure(nid, node, _):
-            structure.append((nid, node.get("class_type", "")))
+            upstream = []
+            for value in node.get("inputs", {}).values():
+                next_id = cls._extract_upstream_node_id(value, prompt)
+                if next_id is not None:
+                    upstream.append(next_id)
+            structure.append((nid, node.get("class_type", ""), tuple(sorted(upstream))))
+
         cls._bfs_traverse(start_node_id, prompt, collect_structure)
         structure.sort()
-        return hash(tuple(structure))
+        return (str(start_node_id), tuple(structure))
 
     @classmethod
     def trace(cls, start_node_id, prompt):
+        start_node_id = str(start_node_id)
         sig = cls._compute_trace_signature(start_node_id, prompt)
         if sig in cls._trace_cache:
             return cls._trace_cache[sig]
