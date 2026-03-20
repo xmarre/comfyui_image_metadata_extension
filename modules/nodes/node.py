@@ -3,7 +3,6 @@ import os
 import re
 import unicodedata
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import piexif
@@ -137,9 +136,20 @@ class SaveImageWithMetaData:
         """
         Finds the next available filename by checking existing files in the directory.
         """
-        existing = {f.stem for f in Path(folder).glob(f"{name}_*.{ext}")}
+        # `name` is a literal filename stem, not a glob pattern.
+        pattern = re.compile(rf"^{re.escape(name)}_(\d{{5}})\.{re.escape(ext)}$")
+        existing = set()
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    match = pattern.match(entry.name)
+                    if match:
+                        existing.add(int(match.group(1)))
+        except FileNotFoundError:
+            return 1
+
         i = 1
-        while f"{name}_{i:05d}" in existing:
+        while i in existing:
             i += 1
         return i
 
