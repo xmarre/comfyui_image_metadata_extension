@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import unicodedata
@@ -139,7 +140,11 @@ class SaveImageWithMetaData:
         Reject recursive or unsupported structures instead of handing them
         directly to json.dump/json.dumps.
         """
-        if value is None or isinstance(value, (str, int, float, bool)):
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise ValueError(f"non-finite float at {path}")
             return value
 
         if active is None:
@@ -352,7 +357,7 @@ class SaveImageWithMetaData:
                 json_filename = os.path.splitext(last_image_filename)[0] + ".json"
                 batch_json_file = os.path.join(full_output_folder, json_filename)
                 with open(batch_json_file, "w", encoding="utf-8") as f:
-                    json.dump(workflow_json, f)
+                    json.dump(workflow_json, f, allow_nan=False)
 
         return {"ui": {"images": results}}
 
@@ -383,16 +388,18 @@ class SaveImageWithMetaData:
             except (TypeError, ValueError) as e:
                 print_warning(f"Skipping prompt metadata: {e}")
             else:
-                metadata.add_text("prompt", json.dumps(prompt_value))
+                metadata.add_text("prompt", json.dumps(prompt_value, allow_nan=False))
 
         if extra_pnginfo is not None:
             for x in extra_pnginfo:
+                if metadata_scope == MetadataScope.WORKFLOW_ONLY and x != "workflow":
+                    continue
                 try:
                     value = self._normalize_json_value(extra_pnginfo[x], f"extra_pnginfo[{x!r}]")
                 except (TypeError, ValueError) as e:
                     print_warning(f"Skipping metadata field '{x}': {e}")
                     continue
-                metadata.add_text(x, json.dumps(value))
+                metadata.add_text(x, json.dumps(value, allow_nan=False))
 
         return metadata
 
