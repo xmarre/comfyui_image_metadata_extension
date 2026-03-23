@@ -132,6 +132,56 @@ class SaveImageWithMetaData:
             QualityOption.LOW: 30
         }.get(quality, 100)
 
+    @classmethod
+    def _normalize_json_value(cls, value, path="$", active=None):
+        """
+        Convert foreign metadata into a detached plain JSON tree.
+        Reject recursive or unsupported structures instead of handing them
+        directly to json.dump/json.dumps.
+        """
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if active is None:
+            active = {}
+
+        if isinstance(value, dict):
+            oid = id(value)
+            if oid in active:
+                raise ValueError(f"circular reference detected at {path} (via {active[oid]})")
+            active[oid] = path
+            try:
+                out = {}
+                for key, item in value.items():
+                    if isinstance(key, str):
+                        json_key = key
+                    elif key is None:
+                        json_key = "null"
+                    elif key is True:
+                        json_key = "true"
+                    elif key is False:
+                        json_key = "false"
+                    elif isinstance(key, (int, float)):
+                        json_key = str(key)
+                    else:
+                        raise TypeError(f"unsupported key type {type(key).__name__} at {path}")
+                    out[json_key] = cls._normalize_json_value(item, f"{path}.{json_key}", active)
+                return out
+            finally:
+                active.pop(oid, None)
+
+        if isinstance(value, (list, tuple)):
+            oid = id(value)
+            if oid in active:
+                raise ValueError(f"circular reference detected at {path} (via {active[oid]})")
+            active[oid] = path
+            try:
+                return [cls._normalize_json_value(item, f"{path}[{idx}]", active) for idx, item in enumerate(value)]
+            finally:
+                active.pop(oid, None)
+
+        raise TypeError(f"unsupported value type {type(value).__name__} at {path}")
+
     def find_next_available_filename(self, folder: str, name: str, ext: str):
         """
         Finds the next available filename by checking existing files in the directory.
@@ -285,12 +335,16 @@ class SaveImageWithMetaData:
             results.append({"filename": file, "subfolder": subfolder, "type": self.type})
 
         # Save workflow metadata for the batch
-        if save_workflow_json and images_length > 0 and last_image_filename:
-            json_filename = last_image_filename.replace(base_format, "json")
-            batch_json_file = os.path.join(full_output_folder, json_filename)
-
-            with open(batch_json_file, "w", encoding="utf-8") as f:
-                json.dump(extra_pnginfo["workflow"], f)
+        if save_workflow_json and images_length > 0 and last_image_filename and extra_pnginfo is not None and "workflow" in extra_pnginfo:
+            try:
+                workflow_json = self._normalize_json_value(extra_pnginfo["workflow"], "extra_pnginfo.workflow")
+            except (TypeError, ValueError) as e:
+                print_warning(f"Skipping workflow JSON sidecar: {e}")
+            else:
+                json_filename = last_image_filename.replace(base_format, "json")
+                batch_json_file = os.path.join(full_output_folder, json_filename)
+                with open(batch_json_file, "w", encoding="utf-8") as f:
+                    json.dump(workflow_json, f)
 
         return {"ui": {"images": results}}
 
@@ -316,11 +370,21 @@ class SaveImageWithMetaData:
                         return metadata
 
         if prompt is not None and metadata_scope != MetadataScope.WORKFLOW_ONLY:
-            metadata.add_text("prompt", json.dumps(prompt))
+            try:
+                prompt_value = self._normalize_json_value(prompt, "prompt")
+            except (TypeError, ValueError) as e:
+                print_warning(f"Skipping prompt metadata: {e}")
+            else:
+                metadata.add_text("prompt", json.dumps(prompt_value))
 
         if extra_pnginfo is not None:
             for x in extra_pnginfo:
-                metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+                try:
+                    value = self._normalize_json_value(extra_pnginfo[x], f"extra_pnginfo[{x!r}]")
+                except (TypeError, ValueError) as e:
+                    print_warning(f"Skipping metadata field '{x}': {e}")
+                    continue
+                metadata.add_text(x, json.dumps(value))
 
         return metadata
 
