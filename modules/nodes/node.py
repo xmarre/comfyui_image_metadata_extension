@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import unicodedata
@@ -131,6 +132,68 @@ class SaveImageWithMetaData:
             QualityOption.MEDIUM: 60,
             QualityOption.LOW: 30
         }.get(quality, 100)
+
+    @classmethod
+    def _normalize_json_value(cls, value, path="$", active=None):
+        """
+        Convert foreign metadata into a detached plain JSON tree.
+        Reject recursive or unsupported structures instead of handing them
+        directly to json.dump/json.dumps.
+        """
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise ValueError(f"non-finite float at {path}")
+            return value
+
+        if active is None:
+            active = {}
+
+        if isinstance(value, dict):
+            oid = id(value)
+            if oid in active:
+                raise ValueError(f"circular reference detected at {path} (via {active[oid]})")
+            active[oid] = path
+            try:
+                out = {}
+                seen_json_keys = {}
+                for key, item in value.items():
+                    if isinstance(key, str):
+                        json_key = key
+                    elif key is None:
+                        json_key = "null"
+                    elif key is True:
+                        json_key = "true"
+                    elif key is False:
+                        json_key = "false"
+                    elif isinstance(key, (int, float)):
+                        json_key = str(key)
+                    else:
+                        raise TypeError(f"unsupported key type {type(key).__name__} at {path}")
+                    if json_key in seen_json_keys:
+                        prev_key = seen_json_keys[json_key]
+                        raise ValueError(
+                            f"duplicate JSON key {json_key!r} at {path} from "
+                            f"{prev_key!r} ({type(prev_key).__name__}) and {key!r} ({type(key).__name__})"
+                        )
+                    seen_json_keys[json_key] = key
+                    out[json_key] = cls._normalize_json_value(item, f"{path}.{json_key}", active)
+                return out
+            finally:
+                active.pop(oid, None)
+
+        if isinstance(value, (list, tuple)):
+            oid = id(value)
+            if oid in active:
+                raise ValueError(f"circular reference detected at {path} (via {active[oid]})")
+            active[oid] = path
+            try:
+                return [cls._normalize_json_value(item, f"{path}[{idx}]", active) for idx, item in enumerate(value)]
+            finally:
+                active.pop(oid, None)
+
+        raise TypeError(f"unsupported value type {type(value).__name__} at {path}")
 
     def find_next_available_filename(self, folder: str, name: str, ext: str):
         """
@@ -285,12 +348,16 @@ class SaveImageWithMetaData:
             results.append({"filename": file, "subfolder": subfolder, "type": self.type})
 
         # Save workflow metadata for the batch
-        if save_workflow_json and images_length > 0 and last_image_filename:
-            json_filename = last_image_filename.replace(base_format, "json")
-            batch_json_file = os.path.join(full_output_folder, json_filename)
-
-            with open(batch_json_file, "w", encoding="utf-8") as f:
-                json.dump(extra_pnginfo["workflow"], f)
+        if save_workflow_json and images_length > 0 and last_image_filename and extra_pnginfo is not None and "workflow" in extra_pnginfo:
+            try:
+                workflow_json = self._normalize_json_value(extra_pnginfo["workflow"], "extra_pnginfo.workflow")
+            except (TypeError, ValueError) as e:
+                print_warning(f"Skipping workflow JSON sidecar: {e}")
+            else:
+                json_filename = os.path.splitext(last_image_filename)[0] + ".json"
+                batch_json_file = os.path.join(full_output_folder, json_filename)
+                with open(batch_json_file, "w", encoding="utf-8") as f:
+                    json.dump(workflow_json, f, allow_nan=False)
 
         return {"ui": {"images": results}}
 
@@ -316,11 +383,23 @@ class SaveImageWithMetaData:
                         return metadata
 
         if prompt is not None and metadata_scope != MetadataScope.WORKFLOW_ONLY:
-            metadata.add_text("prompt", json.dumps(prompt))
+            try:
+                prompt_value = self._normalize_json_value(prompt, "prompt")
+            except (TypeError, ValueError) as e:
+                print_warning(f"Skipping prompt metadata: {e}")
+            else:
+                metadata.add_text("prompt", json.dumps(prompt_value, allow_nan=False))
 
         if extra_pnginfo is not None:
             for x in extra_pnginfo:
-                metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+                if metadata_scope == MetadataScope.WORKFLOW_ONLY and x != "workflow":
+                    continue
+                try:
+                    value = self._normalize_json_value(extra_pnginfo[x], f"extra_pnginfo[{x!r}]")
+                except (TypeError, ValueError) as e:
+                    print_warning(f"Skipping metadata field '{x}': {e}")
+                    continue
+                metadata.add_text(x, json.dumps(value, allow_nan=False))
 
         return metadata
 
