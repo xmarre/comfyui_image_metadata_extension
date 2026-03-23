@@ -152,6 +152,7 @@ class SaveImageWithMetaData:
             active[oid] = path
             try:
                 out = {}
+                seen_json_keys = {}
                 for key, item in value.items():
                     if isinstance(key, str):
                         json_key = key
@@ -165,6 +166,13 @@ class SaveImageWithMetaData:
                         json_key = str(key)
                     else:
                         raise TypeError(f"unsupported key type {type(key).__name__} at {path}")
+                    if json_key in seen_json_keys:
+                        prev_key = seen_json_keys[json_key]
+                        raise ValueError(
+                            f"duplicate JSON key {json_key!r} at {path} from "
+                            f"{prev_key!r} ({type(prev_key).__name__}) and {key!r} ({type(key).__name__})"
+                        )
+                    seen_json_keys[json_key] = key
                     out[json_key] = cls._normalize_json_value(item, f"{path}.{json_key}", active)
                 return out
             finally:
@@ -341,7 +349,7 @@ class SaveImageWithMetaData:
             except (TypeError, ValueError) as e:
                 print_warning(f"Skipping workflow JSON sidecar: {e}")
             else:
-                json_filename = last_image_filename.replace(base_format, "json")
+                json_filename = os.path.splitext(last_image_filename)[0] + ".json"
                 batch_json_file = os.path.join(full_output_folder, json_filename)
                 with open(batch_json_file, "w", encoding="utf-8") as f:
                     json.dump(workflow_json, f)
