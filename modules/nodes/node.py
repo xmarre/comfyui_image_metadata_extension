@@ -133,6 +133,19 @@ class SaveImageWithMetaData:
             QualityOption.LOW: 30
         }.get(quality, 100)
 
+    @staticmethod
+    def build_workflow_json_payload(workflow):
+        """
+        Emit a sidecar JSON that works with ComfyUI variants that:
+        - accept a raw workflow document, and/or
+        - expect a top-level `workflow` field.
+        """
+        if not isinstance(workflow, dict):
+            return workflow
+        payload = dict(workflow)
+        payload.setdefault("workflow", workflow)
+        return payload
+
     @classmethod
     def _normalize_json_value(cls, value, path="$", active=None):
         """
@@ -357,7 +370,7 @@ class SaveImageWithMetaData:
                 json_filename = os.path.splitext(last_image_filename)[0] + ".json"
                 batch_json_file = os.path.join(full_output_folder, json_filename)
                 with open(batch_json_file, "w", encoding="utf-8") as f:
-                    json.dump(workflow_json, f, allow_nan=False)
+                    json.dump(self.build_workflow_json_payload(workflow_json), f, allow_nan=False)
 
         return {"ui": {"images": results}}
 
