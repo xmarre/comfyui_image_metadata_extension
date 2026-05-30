@@ -11,7 +11,6 @@ from .utils.log import print_warning
 
 from nodes import NODE_CLASS_MAPPINGS
 from .trace import Trace
-from execution import get_input_data
 from comfy_execution.graph import DynamicPrompt
 
 
@@ -78,45 +77,50 @@ class Capture:
             obj_class = NODE_CLASS_MAPPINGS[class_type]
             node_inputs = obj["inputs"]
 
-            input_data = get_input_data(
+            # Process field data mappings only for node classes that can contribute
+            # metadata. Resolving full input_data for every prompt node can pull
+            # large cached IMAGE/LATENT tensors through ComfyUI's cache API during
+            # the save node, which makes the output node unnecessarily expensive
+            # and can leave the UI waiting even after the image file appears.
+            metas = CAPTURE_FIELD_LIST.get(class_type)
+            if not metas:
+                continue
+
+            get_input_data_func = hook.original_get_input_data or __import__("execution").get_input_data
+            input_data = get_input_data_func(
                 node_inputs, obj_class, node_id, outputs, DynamicPrompt(prompt), extra_data
             )
 
-            # Process field data mappings for the captured inputs
-            for node_class, metas in CAPTURE_FIELD_LIST.items():
-                if class_type != node_class:
+            for meta, field_data in metas.items():
+                # Skip invalidated nodes
+                if field_data.get("validate") and not field_data["validate"](
+                    node_id, obj, prompt, extra_data, outputs, input_data
+                ):
                     continue
 
-                for meta, field_data in metas.items():
-                    # Skip invalidated nodes
-                    if field_data.get("validate") and not field_data["validate"](
-                        node_id, obj, prompt, extra_data, outputs, input_data
-                    ):
-                        continue
+                # Initialize list for meta if not exists
+                if meta not in inputs:
+                    inputs[meta] = []
 
-                    # Initialize list for meta if not exists
-                    if meta not in inputs:
-                        inputs[meta] = []
+                # Get field value or selector
+                value = field_data.get("value")
+                if value is not None:
+                    inputs[meta].append((node_id, value))
+                    continue
 
-                    # Get field value or selector
-                    value = field_data.get("value")
-                    if value is not None:
-                        inputs[meta].append((node_id, value))
-                        continue
+                selector = field_data.get("selector")
+                if selector:
+                    v = selector(node_id, obj, prompt, extra_data, outputs, input_data)
+                    cls._append_value(inputs, meta, node_id, v)
+                    continue
 
-                    selector = field_data.get("selector")
-                    if selector:
-                        v = selector(node_id, obj, prompt, extra_data, outputs, input_data)
-                        cls._append_value(inputs, meta, node_id, v)
-                        continue
-
-                    # Fetch and process value from field_name
-                    field_name = field_data["field_name"]
-                    value = input_data[0].get(field_name)
-                    if value is not None:
-                        format_func = field_data.get("format")
-                        v = cls._apply_formatting(value, input_data, format_func)
-                        cls._append_value(inputs, meta, node_id, v)
+                # Fetch and process value from field_name
+                field_name = field_data["field_name"]
+                value = input_data[0].get(field_name)
+                if value is not None:
+                    format_func = field_data.get("format")
+                    v = cls._apply_formatting(value, input_data, format_func)
+                    cls._append_value(inputs, meta, node_id, v)
 
         return inputs
 

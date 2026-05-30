@@ -105,7 +105,8 @@ class SaveImageWithMetaData:
             },
             "hidden": {
                 "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO"
+                "extra_pnginfo": "EXTRA_PNGINFO",
+                "unique_id": "UNIQUE_ID"
             },
         }
 
@@ -271,18 +272,16 @@ class SaveImageWithMetaData:
     def save_images(self, images, filename_prefix="ComfyUI", subdirectory_name="", prompt=None,
                     extra_pnginfo=None, extra_metadata=None, output_format="png",
                     quality="max", metadata_scope="full",
-                    include_batch_num=True, prefer_nearest=True, pnginfo_dict=None):
+                    include_batch_num=True, prefer_nearest=True, pnginfo_dict=None, unique_id=None):
 
         extra_metadata = extra_metadata or {}
         base_format, save_workflow_json = self.parse_output_format(output_format)
-        pnginfo = PngInfo()
-
         # Parse filename
         filename_prefix = filename_prefix.strip()
         segments = self.parse_filename_placeholders(filename_prefix)
 
         if metadata_scope in [MetadataScope.FULL, MetadataScope.PARAMETERS_ONLY] or self.needs_pnginfo_in_filename(segments):
-            pnginfo_dict = pnginfo_dict or self.gen_pnginfo(prompt, prefer_nearest)
+            pnginfo_dict = pnginfo_dict or self.gen_pnginfo(prompt, prefer_nearest, unique_id)
 
         raw_filename_prefix = self.format_filename(
             filename_prefix, pnginfo_dict or {}, segments
@@ -324,9 +323,10 @@ class SaveImageWithMetaData:
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
 
             # Prepare metadata
-            metadata = self.prepare_pnginfo(pnginfo, pnginfo_dict, batch_number, images_length, prompt, extra_pnginfo, metadata_scope)
-            for key, value in extra_metadata.items():
-                metadata.add_text(key, value)
+            metadata = self.prepare_pnginfo(PngInfo(), pnginfo_dict, batch_number, images_length, prompt, extra_pnginfo, metadata_scope)
+            if metadata is not None:
+                for key, value in extra_metadata.items():
+                    metadata.add_text(key, value)
 
             # Handle filename collision and batch number inclusion
             file = f"{filename}_{batch_number:05d}.{base_format}" if include_batch_num else f"{filename}.{base_format}"
@@ -417,9 +417,12 @@ class SaveImageWithMetaData:
         return metadata
 
     @classmethod
-    def gen_pnginfo(s, prompt, prefer_nearest):
+    def gen_pnginfo(s, prompt, prefer_nearest, unique_id=None):
+        if unique_id is None:
+            raise RuntimeError("SaveImageWithMetaData requires ComfyUI UNIQUE_ID to trace metadata inputs")
+
         inputs = Capture.get_inputs()
-        trace_tree_from_this_node = Trace.trace(hook.current_save_image_node_id, prompt)
+        trace_tree_from_this_node = Trace.trace(unique_id, prompt)
         inputs_before_this_node = Trace.filter_inputs_by_trace_tree(inputs, trace_tree_from_this_node, prefer_nearest)
 
         sampler_node_id = Trace.find_sampler_node_id(trace_tree_from_this_node)
