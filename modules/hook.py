@@ -4,6 +4,7 @@ current_prompt = {}
 current_extra_data = {}
 prompt_executer = None
 current_save_image_node_id = -1
+original_get_input_data = None
 
 
 def pre_execute(self, prompt, prompt_id, extra_data, execute_outputs):

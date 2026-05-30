@@ -1,6 +1,7 @@
 import functools
 
-from .hook import pre_execute, pre_get_input_data
+from . import hook
+from .hook import pre_execute
 import execution
 
 
@@ -14,9 +15,8 @@ def prefix_function(function, prefunction):
     return run
 
 
+hook.original_get_input_data = execution.get_input_data
+
 execution.PromptExecutor.execute = prefix_function(
     execution.PromptExecutor.execute, pre_execute
 )
-
-
-execution.get_input_data = prefix_function(execution.get_input_data, pre_get_input_data)
