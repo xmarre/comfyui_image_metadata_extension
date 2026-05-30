@@ -324,8 +324,9 @@ class SaveImageWithMetaData:
 
             # Prepare metadata
             metadata = self.prepare_pnginfo(PngInfo(), pnginfo_dict, batch_number, images_length, prompt, extra_pnginfo, metadata_scope)
-            for key, value in extra_metadata.items():
-                metadata.add_text(key, value)
+            if metadata is not None:
+                for key, value in extra_metadata.items():
+                    metadata.add_text(key, value)
 
             # Handle filename collision and batch number inclusion
             file = f"{filename}_{batch_number:05d}.{base_format}" if include_batch_num else f"{filename}.{base_format}"
@@ -417,9 +418,11 @@ class SaveImageWithMetaData:
 
     @classmethod
     def gen_pnginfo(s, prompt, prefer_nearest, unique_id=None):
-        save_node_id = unique_id if unique_id is not None else hook.current_save_image_node_id
+        if unique_id is None:
+            raise RuntimeError("SaveImageWithMetaData requires ComfyUI UNIQUE_ID to trace metadata inputs")
+
         inputs = Capture.get_inputs()
-        trace_tree_from_this_node = Trace.trace(save_node_id, prompt)
+        trace_tree_from_this_node = Trace.trace(unique_id, prompt)
         inputs_before_this_node = Trace.filter_inputs_by_trace_tree(inputs, trace_tree_from_this_node, prefer_nearest)
 
         sampler_node_id = Trace.find_sampler_node_id(trace_tree_from_this_node)

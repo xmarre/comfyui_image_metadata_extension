@@ -1,9 +1,6 @@
-from .nodes.node import SaveImageWithMetaData
-
 current_prompt = {}
 current_extra_data = {}
 prompt_executer = None
-current_save_image_node_id = -1
 original_get_input_data = None
 
 
@@ -15,10 +12,3 @@ def pre_execute(self, prompt, prompt_id, extra_data, execute_outputs):
     current_prompt = prompt
     current_extra_data = extra_data
     prompt_executer = self
-
-
-def pre_get_input_data(inputs, class_def, unique_id, *args):
-    global current_save_image_node_id
-
-    if class_def == SaveImageWithMetaData:
-        current_save_image_node_id = unique_id
