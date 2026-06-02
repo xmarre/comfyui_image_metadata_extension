@@ -92,11 +92,25 @@ class Capture:
             )
 
             for meta, field_data in metas.items():
-                # Skip invalidated nodes
-                if field_data.get("validate") and not field_data["validate"](
-                    node_id, obj, prompt, extra_data, outputs, input_data
-                ):
-                    continue
+                # Skip invalidated nodes. Metadata capture must not abort image
+                # saving if a validator fails on stale bytecode, a changed prompt
+                # shape, or a third-party node with unexpected metadata.
+                validator = field_data.get("validate")
+                if validator:
+                    try:
+                        valid = validator(
+                            node_id, obj, prompt, extra_data, outputs, input_data
+                        )
+                    except Exception as e:
+                        print_warning(
+                            "Skipping metadata field after validator failure "
+                            f"for node {node_id} ({class_type}), "
+                            f"validator={getattr(validator, '__name__', repr(validator))}: {e}"
+                        )
+                        continue
+
+                    if not valid:
+                        continue
 
                 # Initialize list for meta if not exists
                 if meta not in inputs:
