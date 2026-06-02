@@ -1,11 +1,14 @@
+import logging
 from collections import deque
 
 from .samplers import SAMPLERS
 
 try:
     from comfy_execution.graph_utils import is_link as _comfy_is_link
-except Exception:
+except ImportError:
     _comfy_is_link = None
+
+logger = logging.getLogger(__name__)
 
 
 def is_positive_prompt(node_id, obj, prompt, extra_data, outputs, input_data_all):
@@ -58,8 +61,8 @@ def _is_link(value):
         try:
             if _comfy_is_link(value):
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("ComfyUI is_link failed; falling back to local link check: %s", e)
 
     return (
         isinstance(value, (list, tuple))
@@ -126,7 +129,7 @@ def _iter_sampler_prompt_links(prompt, field_name):
     # Use a snapshot because extensions mutate SAMPLERS during startup.
     sampler_items = tuple(SAMPLERS.items()) if isinstance(SAMPLERS, dict) else ()
 
-    for node_id, node in prompt.items():
+    for _node_id, node in prompt.items():
         class_type = _get_class_type(node)
         inputs = _get_inputs(node)
         yielded_for_node = set()
