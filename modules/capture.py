@@ -80,11 +80,6 @@ class Capture:
                 print_warning(f"Skipping malformed prompt node {node_id!r} while generating metadata")
                 continue
 
-            obj_class = NODE_CLASS_MAPPINGS.get(class_type)
-            if obj_class is None:
-                print_warning(f"Skipping metadata for unknown node class {class_type!r} at node {node_id}")
-                continue
-
             # Process field data mappings only for node classes that can contribute
             # metadata. Resolving full input_data for every prompt node can pull
             # large cached IMAGE/LATENT tensors through ComfyUI's cache API during
@@ -94,8 +89,13 @@ class Capture:
             if not metas:
                 continue
 
-            get_input_data_func = hook.original_get_input_data or __import__("execution").get_input_data
+            obj_class = NODE_CLASS_MAPPINGS.get(class_type)
+            if obj_class is None:
+                print_warning(f"Skipping metadata for unknown node class {class_type!r} at node {node_id}")
+                continue
+
             try:
+                get_input_data_func = hook.original_get_input_data or __import__("execution").get_input_data
                 input_data = get_input_data_func(
                     node_inputs, obj_class, node_id, outputs, DynamicPrompt(prompt), extra_data
                 )

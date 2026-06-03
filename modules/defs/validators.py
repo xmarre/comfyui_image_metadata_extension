@@ -57,51 +57,28 @@ def _linked_node_id(value):
     return str(value[0])
 
 
-def _sampler_side_input_names(field_name):
-    names = {field_name}
-
-    if not isinstance(SAMPLERS, Mapping):
-        return names
+def _sampler_field_map(class_type):
+    if not class_type or not isinstance(SAMPLERS, Mapping):
+        return None
 
     try:
-        sampler_items = tuple(SAMPLERS.items())
+        field_map = SAMPLERS.get(class_type)
     except Exception:
-        return names
+        return None
 
-    for _sampler_type, field_map in sampler_items:
-        if not isinstance(field_map, Mapping):
-            continue
-
-        input_name = field_map.get(field_name)
-        if isinstance(input_name, str) and input_name:
-            names.add(input_name)
-
-    return names
+    return field_map if isinstance(field_map, Mapping) else None
 
 
 def _node_is_directly_connected_to_side(prompt, node_id, field_name):
     wanted = str(node_id)
-    side_input_names = _sampler_side_input_names(field_name)
 
     for _current_id, current_node in _prompt_items(prompt):
         inputs = _inputs(current_node)
         if not inputs:
             continue
 
-        for input_name in side_input_names:
-            if _linked_node_id(inputs.get(input_name)) == wanted:
-                return True
-
-        class_type = _class_type(current_node)
-        if not class_type or not isinstance(SAMPLERS, Mapping):
-            continue
-
-        try:
-            field_map = SAMPLERS.get(class_type)
-        except Exception:
-            field_map = None
-
-        if not isinstance(field_map, Mapping):
+        field_map = _sampler_field_map(_class_type(current_node))
+        if field_map is None:
             continue
 
         input_name = field_map.get(field_name)
