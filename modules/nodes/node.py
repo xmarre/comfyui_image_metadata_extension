@@ -281,7 +281,7 @@ class SaveImageWithMetaData:
         segments = self.parse_filename_placeholders(filename_prefix)
 
         if metadata_scope in [MetadataScope.FULL, MetadataScope.PARAMETERS_ONLY] or self.needs_pnginfo_in_filename(segments):
-            if not pnginfo_dict:
+            if pnginfo_dict is None:
                 try:
                     pnginfo_dict = self.gen_pnginfo(prompt, prefer_nearest, unique_id)
                 except Exception as e:

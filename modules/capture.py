@@ -73,9 +73,17 @@ class Capture:
             outputs = None
 
         for node_id, obj in prompt.items():
-            class_type = obj["class_type"]
-            obj_class = NODE_CLASS_MAPPINGS[class_type]
-            node_inputs = obj["inputs"]
+            try:
+                class_type = obj.get("class_type")
+                node_inputs = obj.get("inputs") or {}
+            except AttributeError:
+                print_warning(f"Skipping malformed prompt node {node_id!r} while generating metadata")
+                continue
+
+            obj_class = NODE_CLASS_MAPPINGS.get(class_type)
+            if obj_class is None:
+                print_warning(f"Skipping metadata for unknown node class {class_type!r} at node {node_id}")
+                continue
 
             # Process field data mappings only for node classes that can contribute
             # metadata. Resolving full input_data for every prompt node can pull
@@ -87,54 +95,51 @@ class Capture:
                 continue
 
             get_input_data_func = hook.original_get_input_data or __import__("execution").get_input_data
-            input_data = get_input_data_func(
-                node_inputs, obj_class, node_id, outputs, DynamicPrompt(prompt), extra_data
-            )
+            try:
+                input_data = get_input_data_func(
+                    node_inputs, obj_class, node_id, outputs, DynamicPrompt(prompt), extra_data
+                )
+            except Exception as e:
+                print_warning(f"Skipping metadata for node {node_id} ({class_type}): input resolution failed: {e}")
+                continue
 
             for meta, field_data in metas.items():
-                # Skip invalidated nodes. Metadata capture must not abort image
-                # saving if a validator fails on stale bytecode, a changed prompt
-                # shape, or a third-party node with unexpected metadata.
-                validator = field_data.get("validate")
-                if validator:
-                    try:
-                        valid = validator(
+                try:
+                    # Skip invalidated nodes. Metadata capture must not abort image
+                    # saving if a validator fails on stale bytecode, a changed prompt
+                    # shape, or a third-party node with unexpected metadata.
+                    validator = field_data.get("validate")
+                    if validator and not validator(
                             node_id, obj, prompt, extra_data, outputs, input_data
-                        )
-                    except Exception as e:
-                        print_warning(
-                            "Skipping metadata field after validator failure "
-                            f"for node {node_id} ({class_type}), "
-                            f"validator={getattr(validator, '__name__', repr(validator))}: {e}"
-                        )
+                    ):
                         continue
 
-                    if not valid:
+                    # Initialize list for meta if not exists
+                    if meta not in inputs:
+                        inputs[meta] = []
+
+                    # Get field value or selector
+                    value = field_data.get("value")
+                    if value is not None:
+                        inputs[meta].append((node_id, value))
                         continue
 
-                # Initialize list for meta if not exists
-                if meta not in inputs:
-                    inputs[meta] = []
+                    selector = field_data.get("selector")
+                    if selector:
+                        v = selector(node_id, obj, prompt, extra_data, outputs, input_data)
+                        cls._append_value(inputs, meta, node_id, v)
+                        continue
 
-                # Get field value or selector
-                value = field_data.get("value")
-                if value is not None:
-                    inputs[meta].append((node_id, value))
+                    # Fetch and process value from field_name
+                    field_name = field_data["field_name"]
+                    value = input_data[0].get(field_name)
+                    if value is not None:
+                        format_func = field_data.get("format")
+                        v = cls._apply_formatting(value, input_data, format_func)
+                        cls._append_value(inputs, meta, node_id, v)
+                except Exception as e:
+                    print_warning(f"Skipping metadata field {meta} for node {node_id} ({class_type}): {e}")
                     continue
-
-                selector = field_data.get("selector")
-                if selector:
-                    v = selector(node_id, obj, prompt, extra_data, outputs, input_data)
-                    cls._append_value(inputs, meta, node_id, v)
-                    continue
-
-                # Fetch and process value from field_name
-                field_name = field_data["field_name"]
-                value = input_data[0].get(field_name)
-                if value is not None:
-                    format_func = field_data.get("format")
-                    v = cls._apply_formatting(value, input_data, format_func)
-                    cls._append_value(inputs, meta, node_id, v)
 
         return inputs
 
